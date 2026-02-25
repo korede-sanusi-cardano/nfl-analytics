@@ -1,3 +1,16 @@
+import sys
+from pathlib import Path
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
+from src.data.nfl_stats import NFLStats
+from src.models.vorp import LeagueSettings, VORPCalculator
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
 """
 NFL Dynasty Analytics — Streamlit Draft Helper Dashboard.
 
@@ -5,18 +18,7 @@ Your command centre for dynasty draft preparation. Displays VORP rankings,
 aging curves, positional scarcity, and trade sentiment in one place.
 """
 
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from pathlib import Path
-
 # Add project root to path
-import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
-from src.data.nfl_stats import NFLStats
-from src.models.vorp import VORPCalculator, LeagueSettings
 
 st.set_page_config(
     page_title="Dynasty Draft Helper",
@@ -61,7 +63,7 @@ def main():
 
         analysis_season = st.selectbox(
             "Analysis Season",
-            options=list(range(2024, 2014, -1)),
+            options=list(range(2025, 2014, -1)),
             index=0,
         )
 
@@ -73,13 +75,16 @@ def main():
             help="How many years to project for Dynasty VORP (like your DCF horizon)",
         )
 
-        discount_rate = st.slider(
-            "Discount Rate (%)",
-            min_value=5,
-            max_value=25,
-            value=10,
-            help="Annual discount rate for future production (higher = more weight on present)",
-        ) / 100.0
+        discount_rate = (
+            st.slider(
+                "Discount Rate (%)",
+                min_value=5,
+                max_value=25,
+                value=10,
+                help="Annual discount rate for future production (higher = more weight on present)",
+            )
+            / 100.0
+        )
 
         num_teams = st.number_input("League Size", value=12, min_value=8, max_value=16)
 
@@ -102,12 +107,14 @@ def main():
     )
 
     # Main tabs
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📊 Dynasty Rankings",
-        "📈 Aging Curves",
-        "⚖️ Positional Scarcity",
-        "🔍 Player Comparison",
-    ])
+    tab1, tab2, tab3, tab4 = st.tabs(
+        [
+            "📊 Dynasty Rankings",
+            "📈 Aging Curves",
+            "⚖️ Positional Scarcity",
+            "🔍 Player Comparison",
+        ]
+    )
 
     with tab1:
         st.subheader("Dynasty VORP Rankings")
@@ -124,15 +131,23 @@ def main():
 
         # Rankings table
         display_cols = [
-            "dynasty_rank", "player_name", "position", "age",
-            "ppg", "vorp", "dynasty_vorp", "games_played",
+            "dynasty_rank",
+            "player_name",
+            "position",
+            "age",
+            "ppg",
+            "vorp",
+            "dynasty_vorp",
+            "games_played",
         ]
         st.dataframe(
-            filtered[display_cols].style.format({
-                "ppg": "{:.1f}",
-                "vorp": "{:.1f}",
-                "dynasty_vorp": "{:.1f}",
-            }),
+            filtered[display_cols].style.format(
+                {
+                    "ppg": "{:.1f}",
+                    "vorp": "{:.1f}",
+                    "dynasty_vorp": "{:.1f}",
+                }
+            ),
             use_container_width=True,
             height=600,
         )
@@ -157,8 +172,8 @@ def main():
         history_range = st.slider(
             "Historical Data Range",
             min_value=2015,
-            max_value=2024,
-            value=(2018, 2024),
+            max_value=2025,
+            value=(2018, 2025),
         )
 
         with st.spinner("Calculating aging curves..."):
@@ -166,12 +181,14 @@ def main():
 
         fig = go.Figure()
         for pos, curve_df in curves.items():
-            fig.add_trace(go.Scatter(
-                x=curve_df["age"],
-                y=curve_df["avg_ppg"],
-                name=pos,
-                mode="lines+markers",
-            ))
+            fig.add_trace(
+                go.Scatter(
+                    x=curve_df["age"],
+                    y=curve_df["avg_ppg"],
+                    name=pos,
+                    mode="lines+markers",
+                )
+            )
 
         fig.update_layout(
             title="Average PPG by Age and Position",
@@ -186,14 +203,16 @@ def main():
 
         scarcity = calc.positional_scarcity(player_data)
         st.dataframe(
-            scarcity.style.format({
-                "top5_vorp_share": "{:.1%}",
-                "top12_vorp_share": "{:.1%}",
-                "max_vorp": "{:.1f}",
-                "median_starter_vorp": "{:.1f}",
-                "dropoff": "{:.1f}",
-                "scarcity_score": "{:.2f}",
-            }),
+            scarcity.style.format(
+                {
+                    "top5_vorp_share": "{:.1%}",
+                    "top12_vorp_share": "{:.1%}",
+                    "max_vorp": "{:.1f}",
+                    "median_starter_vorp": "{:.1f}",
+                    "dropoff": "{:.1f}",
+                    "scarcity_score": "{:.2f}",
+                }
+            ),
             use_container_width=True,
         )
 
@@ -216,23 +235,24 @@ def main():
             player_a = st.selectbox("Player A", player_names, index=0)
         with col2:
             player_b = st.selectbox(
-                "Player B", player_names,
+                "Player B",
+                player_names,
                 index=min(1, len(player_names) - 1),
             )
 
         if player_a and player_b:
-            comp = dynasty_df[
-                dynasty_df["player_name"].isin([player_a, player_b])
-            ]
+            comp = dynasty_df[dynasty_df["player_name"].isin([player_a, player_b])]
 
             metrics = ["ppg", "vorp", "dynasty_vorp", "age", "games_played"]
             comp_display = comp[["player_name", "position"] + metrics].set_index("player_name")
             st.dataframe(
-                comp_display.style.format({
-                    "ppg": "{:.1f}",
-                    "vorp": "{:.1f}",
-                    "dynasty_vorp": "{:.1f}",
-                }),
+                comp_display.style.format(
+                    {
+                        "ppg": "{:.1f}",
+                        "vorp": "{:.1f}",
+                        "dynasty_vorp": "{:.1f}",
+                    }
+                ),
                 use_container_width=True,
             )
 

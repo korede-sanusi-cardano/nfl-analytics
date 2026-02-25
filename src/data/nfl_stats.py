@@ -5,7 +5,6 @@ Uses nfl_data_py to pull historical stats, roster data, and play-by-play
 from nflfastR. This is your primary source for actual NFL performance data.
 """
 
-from functools import lru_cache
 from pathlib import Path
 
 import nfl_data_py as nfl
@@ -57,15 +56,30 @@ class NFLStats:
         return df
 
     def get_rosters(self, seasons: list[int]) -> pd.DataFrame:
-        """Get roster/demographic data (age, team, position)."""
-        cache_key = f"rosters_{'_'.join(map(str, seasons))}.parquet"
+        """Get end-of-season roster/demographic data (age, team, position)."""
+        cache_key = f"seasonal_rosters_{'_'.join(map(str, seasons))}.parquet"
         cache_path = self.cache_dir / cache_key
 
         if cache_path.exists():
             return pd.read_parquet(cache_path)
 
-        logger.info(f"Downloading roster data for: {seasons}")
-        df = nfl.import_rosters(seasons)
+        logger.info(f"Downloading seasonal roster data for: {seasons}")
+        df = nfl.import_seasonal_rosters(seasons)
+        df = df[df["position"].isin(self.FANTASY_POSITIONS)].copy()
+
+        df.to_parquet(cache_path)
+        return df
+
+    def get_weekly_rosters(self, seasons: list[int]) -> pd.DataFrame:
+        """Get week-by-week roster snapshots (age, team, position)."""
+        cache_key = f"weekly_rosters_{'_'.join(map(str, seasons))}.parquet"
+        cache_path = self.cache_dir / cache_key
+
+        if cache_path.exists():
+            return pd.read_parquet(cache_path)
+
+        logger.info(f"Downloading weekly roster data for: {seasons}")
+        df = nfl.import_weekly_rosters(seasons)
         df = df[df["position"].isin(self.FANTASY_POSITIONS)].copy()
 
         df.to_parquet(cache_path)
@@ -90,22 +104,18 @@ class NFLStats:
             )
             .reset_index()
         )
-        player_totals["ppg"] = (
-            player_totals["total_points"] / player_totals["games_played"]
-        )
+        player_totals["ppg"] = player_totals["total_points"] / player_totals["games_played"]
 
         # Add position
-        roster_unique = rosters.drop_duplicates(
-            subset=["player_id", "season"]
-        )[["player_id", "position", "age", "team"]].copy()
+        roster_unique = rosters.drop_duplicates(subset=["player_id", "season"])[
+            ["player_id", "position", "age", "team"]
+        ].copy()
 
         merged = player_totals.merge(roster_unique, on="player_id", how="inner")
         merged = merged[merged["position"] == position]
 
         return (
-            merged.sort_values("total_points", ascending=False)
-            .head(top_n)
-            .reset_index(drop=True)
+            merged.sort_values("total_points", ascending=False).head(top_n).reset_index(drop=True)
         )
 
     def get_aging_curves(
@@ -133,21 +143,17 @@ class NFLStats:
             )
             .reset_index()
         )
-        season_totals["ppg"] = (
-            season_totals["total_points"] / season_totals["games_played"]
-        )
+        season_totals["ppg"] = season_totals["total_points"] / season_totals["games_played"]
 
         # Filter minimum games
         season_totals = season_totals[season_totals["games_played"] >= min_games]
 
         # Add age
-        roster_info = rosters.drop_duplicates(
-            subset=["player_id", "season"]
-        )[["player_id", "season", "position", "age"]].copy()
+        roster_info = rosters.drop_duplicates(subset=["player_id", "season"])[
+            ["player_id", "season", "position", "age"]
+        ].copy()
 
-        merged = season_totals.merge(
-            roster_info, on=["player_id", "season"], how="inner"
-        )
+        merged = season_totals.merge(roster_info, on=["player_id", "season"], how="inner")
         merged = merged[merged["position"] == position]
 
         # Average PPG by age
