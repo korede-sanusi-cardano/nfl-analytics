@@ -61,13 +61,15 @@ class TradeSentimentAnalyzer:
             return {}
 
         roster_map = self.client.build_roster_map()
-        tendencies = defaultdict(lambda: {
-            "total_trades": 0,
-            "players_acquired": [],
-            "players_traded_away": [],
-            "picks_acquired": 0,
-            "picks_traded_away": 0,
-        })
+        tendencies = defaultdict(
+            lambda: {
+                "total_trades": 0,
+                "players_acquired": [],
+                "players_traded_away": [],
+                "picks_acquired": 0,
+                "picks_traded_away": 0,
+            }
+        )
 
         for _, trade in trades_df.iterrows():
             adds = trade.get("adds") or {}
@@ -84,9 +86,7 @@ class TradeSentimentAnalyzer:
                 tendencies[manager]["players_traded_away"].append(player_id)
 
             for pick in draft_picks:
-                owner = roster_map.get(
-                    pick.get("owner_id"), f"Roster {pick.get('owner_id')}"
-                )
+                owner = roster_map.get(pick.get("owner_id"), f"Roster {pick.get('owner_id')}")
                 prev_owner = roster_map.get(
                     pick.get("previous_owner_id"),
                     f"Roster {pick.get('previous_owner_id')}",
@@ -96,9 +96,7 @@ class TradeSentimentAnalyzer:
 
         return dict(tendencies)
 
-    def cross_platform_analysis(
-        self, username: str, season: str = "2024"
-    ) -> pd.DataFrame:
+    def cross_platform_analysis(self, username: str, season: str = "2025") -> pd.DataFrame:
         """
         Find a user's other leagues and compare their roster decisions.
 
@@ -115,11 +113,13 @@ class TradeSentimentAnalyzer:
         cross_platform_data = []
         for league in leagues:
             lid = league["league_id"]
-            cross_platform_data.append({
-                "league_id": lid,
-                "league_name": league.get("name", "Unknown"),
-                "total_rosters": league.get("total_rosters", 0),
-                "scoring": league.get("scoring_settings", {}),
-            })
+            cross_platform_data.append(
+                {
+                    "league_id": lid,
+                    "league_name": league.get("name", "Unknown"),
+                    "total_rosters": league.get("total_rosters", 0),
+                    "scoring": league.get("scoring_settings", {}),
+                }
+            )
 
         return pd.DataFrame(cross_platform_data)

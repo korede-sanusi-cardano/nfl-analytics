@@ -12,7 +12,6 @@ applying NPV (Net Present Value) to future fantasy production.
 
 from dataclasses import dataclass
 
-import numpy as np
 import pandas as pd
 from loguru import logger
 
@@ -20,6 +19,7 @@ from loguru import logger
 @dataclass
 class LeagueSettings:
     """Your league's configuration for VORP calculation."""
+
     num_teams: int = 12
     qb_slots: int = 1
     rb_slots: int = 2
@@ -83,9 +83,7 @@ class VORPCalculator:
     def __init__(self, settings: LeagueSettings | None = None):
         self.settings = settings or LeagueSettings()
 
-    def _calculate_replacement_level(
-        self, player_pool: pd.DataFrame
-    ) -> dict[str, float]:
+    def _calculate_replacement_level(self, player_pool: pd.DataFrame) -> dict[str, float]:
         """
         Determine the replacement-level PPG for each position.
 
@@ -224,16 +222,19 @@ class VORPCalculator:
             median_idx = min(12, len(vorps) - 1)
             dropoff = vorps[0] - vorps[median_idx]
 
-            results.append({
-                "position": pos,
-                "top5_vorp_share": top5_share,
-                "top12_vorp_share": top12_share,
-                "max_vorp": vorps[0],
-                "median_starter_vorp": vorps[median_idx],
-                "dropoff": dropoff,
-                "scarcity_score": top5_share * dropoff,
-            })
+            results.append(
+                {
+                    "position": pos,
+                    "top5_vorp_share": top5_share,
+                    "top12_vorp_share": top12_share,
+                    "max_vorp": vorps[0],
+                    "median_starter_vorp": vorps[median_idx],
+                    "dropoff": dropoff,
+                    "scarcity_score": top5_share * dropoff,
+                }
+            )
 
-        return pd.DataFrame(results).sort_values(
-            "scarcity_score", ascending=False
-        )
+        df_results = pd.DataFrame(results)
+        if df_results.empty:
+            return df_results
+        return df_results.sort_values("scarcity_score", ascending=False)
