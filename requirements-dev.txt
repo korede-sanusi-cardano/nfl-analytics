@@ -1,0 +1,18 @@
+# Linting & Formatting
+ruff>=0.1.6
+
+# Type Checking
+mypy>=1.7.0
+pandas-stubs>=2.1.0
+types-requests>=2.31.0
+
+# Pre-commit Hooks
+pre-commit>=3.6.0
+
+# Security Scanning
+bandit>=1.7.6
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0

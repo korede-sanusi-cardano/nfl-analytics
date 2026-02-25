@@ -1,0 +1,55 @@
+[project]
+name = "nfl-dynasty-analytics"
+version = "0.1.0"
+description = "Dynasty fantasy football analytics platform with VORP-based rankings"
+requires-python = ">=3.11"
+
+# ── Ruff (linter + formatter) ──
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort (import sorting)
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear (common bugs)
+    "SIM",  # flake8-simplify
+    "RUF",  # Ruff-specific rules
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src", "config"]
+
+# ── mypy (type checker) ──
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # start relaxed, tighten later
+ignore_missing_imports = true
+
+# ── pytest ──
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+# ── coverage ──
+[tool.coverage.run]
+source = ["src"]
+omit = ["src/dashboard/*"]
+
+[tool.coverage.report]
+fail_under = 50
+show_missing = true
+
+# ── bandit (security) ──
+[tool.bandit]
+exclude_dirs = ["tests"]
