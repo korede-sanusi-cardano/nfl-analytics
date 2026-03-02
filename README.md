@@ -48,7 +48,7 @@ Work through these in order. Each step builds on the last.
 
 - [ ] **Copy the environment template**
   ```bash
-  cp .env.example .env
+  cp .env .env
   ```
 - [ ] **Edit `.env`** with your Sleeper username
 - [ ] **(Optional)** Configure Infisical for production secrets management

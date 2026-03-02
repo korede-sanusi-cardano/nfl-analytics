@@ -77,6 +77,10 @@ class SleeperClient:
             f"{self.BASE_URL}/league/{self.league_id}/drafts"
         )
 
+    def get_draft(self, draft_id: str) -> dict:
+        """Get metadata for a specific draft."""
+        return self._rate_limited_get(f"{self.BASE_URL}/draft/{draft_id}")
+
     def get_draft_picks(self, draft_id: str) -> list[dict]:
         """Get all picks for a specific draft."""
         return self._rate_limited_get(
