@@ -40,7 +40,14 @@ def load_player_data(seasons: list[int]) -> pd.DataFrame:
 
     for season in seasons:
         for pos in ["QB", "RB", "WR", "TE"]:
-            df = nfl.get_top_performers(season, pos, top_n=60)
+            try:
+                df = nfl.get_top_performers(season, pos, top_n=60)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Could not load {season} {pos} data. "
+                    f"The nflverse dataset for {season} may not be published yet. "
+                    f"Try selecting an earlier season. (Original error: {exc})"
+                ) from exc
             df["season"] = season
             all_data.append(df)
 
@@ -119,7 +126,11 @@ def main():
 
     # Load data
     with st.spinner("Loading player data..."):
-        player_data = load_player_data([analysis_season])
+        try:
+            player_data = load_player_data([analysis_season])
+        except RuntimeError as exc:
+            st.error(str(exc))
+            st.stop()
 
     # Calculate VORP
     settings = LeagueSettings(

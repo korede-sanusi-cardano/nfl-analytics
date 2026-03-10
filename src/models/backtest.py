@@ -116,10 +116,6 @@ class RedraftBacktester:
         self.vorp_calc = vorp_calculator
         self.draft_settings = draft_settings or DraftSettings()
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Data preparation (strict temporal boundaries)
-    # ──────────────────────────────────────────────────────────────────────
-
     def _build_pre_season_rankings(
         self,
         target_season: int,
@@ -156,20 +152,11 @@ class RedraftBacktester:
             all_players.append(top)
 
         player_pool = pd.concat(all_players, ignore_index=True)
-
-        # Weight recent performance more heavily with a multi-year blend
         if lookback_years > 1:
-            player_pool = self._apply_multi_year_weighting(
-                player_pool, prior_seasons
-            )
-
-        # Calculate VORP rankings
+            player_pool = self._apply_multi_year_weighting(player_pool, prior_seasons)
         vorp_rankings = self.vorp_calc.calculate_vorp(player_pool)
-        vorp_rankings = vorp_rankings.sort_values("vorp", ascending=False).reset_index(
-            drop=True
-        )
+        vorp_rankings = vorp_rankings.sort_values("vorp", ascending=False).reset_index(drop=True)
         vorp_rankings["vorp_rank"] = range(1, len(vorp_rankings) + 1)
-
         return vorp_rankings
 
     def _apply_multi_year_weighting(
@@ -189,7 +176,6 @@ class RedraftBacktester:
             weights[seasons[-2]] = 0.25
         if len(seasons) >= 3:
             weights[seasons[-3]] = 0.15
-
         # For now, the primary pool is already the most recent season
         # In a full implementation, we'd pull all seasons and blend PPG
         # This is a simplification that still captures the key idea
@@ -205,13 +191,6 @@ class RedraftBacktester:
         from FantasyPros or similar sources.
         """
         adp = player_pool.copy()
-        adp["adp_rank"] = (
-            adp.groupby("position")["total_points"]
-            .rank(ascending=False)
-            .astype(int)
-        )
-        # Overall ADP: positional need weighted by scarcity
-        # Simple approach: rank by total points (mimics "best player available")
         adp = adp.sort_values("total_points", ascending=False).reset_index(drop=True)
         adp["adp_rank"] = range(1, len(adp) + 1)
         return adp
@@ -227,21 +206,12 @@ class RedraftBacktester:
         roster actually was.
         """
         logger.info(f"Loading actual results for {target_season}")
-
         all_actuals = []
         for pos in ["QB", "RB", "WR", "TE"]:
-            df = self.nfl_stats.get_top_performers(
-                target_season, pos, top_n=80
-            )
+            df = self.nfl_stats.get_top_performers(target_season, pos, top_n=80)
             df["season"] = target_season
             all_actuals.append(df)
-
-        actuals = pd.concat(all_actuals, ignore_index=True)
-        return actuals
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Draft simulation engine
-    # ──────────────────────────────────────────────────────────────────────
+        return pd.concat(all_actuals, ignore_index=True)
 
     def _simulate_snake_draft(
         self,
@@ -271,58 +241,30 @@ class RedraftBacktester:
         available = rankings.sort_values(rank_column).copy()
         available_set = set(available.index.tolist())
 
-        # Track roster composition for all teams
-        team_rosters: dict[int, list[dict]] = {
-            t: [] for t in range(1, num_teams + 1)
-        }
-        team_positions: dict[int, dict[str, int]] = {
-            t: {"QB": 0, "RB": 0, "WR": 0, "TE": 0}
-            for t in range(1, num_teams + 1)
-        }
-
+        team_positions = {t: {"QB": 0, "RB": 0, "WR": 0, "TE": 0} for t in range(1, num_teams + 1)}
         our_picks = []
 
         for round_num in range(1, num_rounds + 1):
-            # Snake order: odd rounds go 1→12, even rounds go 12→1
-            if round_num % 2 == 1:
-                order = list(range(1, num_teams + 1))
-            else:
-                order = list(range(num_teams, 0, -1))
+            order = list(range(1, num_teams + 1)) if round_num % 2 == 1 else list(range(num_teams, 0, -1))
 
             for slot_idx, team in enumerate(order):
                 overall_pick = (round_num - 1) * num_teams + slot_idx + 1
 
                 if team == pick_position:
-                    # Our pick — use positional need + BPA strategy
-                    pick = self._make_smart_pick(
-                        available, available_set, team_positions[team],
-                        rank_column, round_num
-                    )
+                    pick = self._make_smart_pick(available, available_set, team_positions[team], rank_column, round_num)
                 else:
-                    # Other teams — simple BPA
-                    pick = self._make_bpa_pick(
-                        available, available_set, team_positions[team],
-                        rank_column, round_num
-                    )
+                    pick = self._make_bpa_pick(available, available_set, team_positions[team], rank_column, round_num)
 
                 if pick is not None:
                     pick_record = {
-                        "round": round_num,
-                        "overall_pick": overall_pick,
-                        "team": team,
-                        "player_id": pick["player_id"],
-                        "player_name": pick["player_name"],
-                        "position": pick["position"],
-                        "projected_ppg": pick["ppg"],
-                        "projected_total": pick["total_points"],
-                        "vorp": pick.get("vorp", 0),
+                        "round": round_num, "overall_pick": overall_pick, "team": team,
+                        "player_id": pick["player_id"], "player_name": pick["player_name"],
+                        "position": pick["position"], "projected_ppg": pick["ppg"],
+                        "projected_total": pick["total_points"], "vorp": pick.get("vorp", 0),
                         "rank_value": pick.get(rank_column, 0),
                     }
-
-                    team_rosters[team].append(pick_record)
                     team_positions[team][pick["position"]] += 1
                     available_set.discard(pick.name)
-
                     if team == pick_position:
                         our_picks.append(pick_record)
 
@@ -346,28 +288,16 @@ class RedraftBacktester:
         pool = available.loc[list(available_set)].sort_values(rank_column)
         if pool.empty:
             return None
-
         starter_needs = self.draft_settings.starter_slots
         total_rounds = self.draft_settings.rounds
         rounds_remaining = total_rounds - current_round + 1
-
-        # Calculate unfilled starter slots
-        unfilled = {}
-        for pos, needed in starter_needs.items():
-            gap = needed - current_positions.get(pos, 0)
-            if gap > 0:
-                unfilled[pos] = gap
-
-        total_unfilled = sum(unfilled.values())
-
-        # If we're running out of rounds to fill starters, force positional picks
-        if total_unfilled >= rounds_remaining and unfilled:
-            # Pick the highest-VORP player at a position we need
+        unfilled = {pos: needed - current_positions.get(pos, 0)
+                    for pos, needed in starter_needs.items()
+                    if needed - current_positions.get(pos, 0) > 0}
+        if sum(unfilled.values()) >= rounds_remaining and unfilled:
             need_pool = pool[pool["position"].isin(unfilled.keys())]
             if not need_pool.empty:
                 return need_pool.iloc[0]
-
-        # Otherwise, best player available
         return pool.iloc[0]
 
     def _make_bpa_pick(
@@ -382,24 +312,12 @@ class RedraftBacktester:
         pool = available.loc[list(available_set)].sort_values(rank_column)
         if pool.empty:
             return None
-
-        starter_needs = self.draft_settings.starter_slots
-
-        # Basic positional limits to prevent unrealistic rosters
-        # (e.g., no team drafts 8 QBs)
         max_by_position = {"QB": 2, "RB": 6, "WR": 6, "TE": 2}
-
         for _, player in pool.iterrows():
             pos = player["position"]
-            current = current_positions.get(pos, 0)
-            if current < max_by_position.get(pos, 6):
+            if current_positions.get(pos, 0) < max_by_position.get(pos, 6):
                 return player
-
         return pool.iloc[0]
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Scoring and evaluation
-    # ──────────────────────────────────────────────────────────────────────
 
     def _score_roster(
         self,
@@ -418,23 +336,21 @@ class RedraftBacktester:
             (total_actual_points, roster_with_actuals)
         """
         roster_df = pd.DataFrame(draft_log)
-
-        # Merge actual season performance
+        # Rename any projected columns that would collide with actuals before merging
+        rename_map = {c: f"{c}_projected" for c in ["total_points", "ppg", "games_played"] if c in roster_df.columns}
+        roster_df = roster_df.rename(columns=rename_map)
         merged = roster_df.merge(
             actual_points[["player_id", "total_points", "ppg", "games_played"]],
             on="player_id",
             how="left",
-            suffixes=("_projected", "_actual"),
         )
-
-        # Handle players who didn't produce (injury, holdout, etc.)
-        merged["total_points_actual"] = merged["total_points_actual"].fillna(0)
-        merged["ppg_actual"] = merged["ppg_actual"].fillna(0)
-        merged["games_played_actual"] = merged["games_played_actual"].fillna(0)
-
-        # Optimise starting lineup (best possible starters each position)
+        merged = merged.rename(columns={"total_points": "total_points_actual", "ppg": "ppg_actual", "games_played": "games_played_actual"})
+        for col in ["total_points_actual", "ppg_actual", "games_played_actual"]:
+            if col not in merged.columns:
+                merged[col] = 0.0
+            else:
+                merged[col] = merged[col].fillna(0)
         total_points = self._optimise_lineup(merged)
-
         return total_points, merged
 
     def _optimise_lineup(self, roster: pd.DataFrame) -> float:
@@ -448,33 +364,18 @@ class RedraftBacktester:
         settings = self.draft_settings
         assigned = set()
         total = 0.0
-
-        # Sort by actual points descending
-        roster_sorted = roster.sort_values(
-            "total_points_actual", ascending=False
-        )
-
-        # Fill required positions first
+        roster_sorted = roster.sort_values("total_points_actual", ascending=False)
         for pos, slots in settings.starter_slots.items():
             pos_players = roster_sorted[
-                (roster_sorted["position"] == pos)
-                & (~roster_sorted.index.isin(assigned))
+                (roster_sorted["position"] == pos) & (~roster_sorted.index.isin(assigned))
             ].head(slots)
             total += pos_players["total_points_actual"].sum()
             assigned.update(pos_players.index)
-
-        # Fill flex spots (RB/WR/TE)
         flex_eligible = roster_sorted[
-            (roster_sorted["position"].isin(["RB", "WR", "TE"]))
-            & (~roster_sorted.index.isin(assigned))
+            (roster_sorted["position"].isin(["RB", "WR", "TE"])) & (~roster_sorted.index.isin(assigned))
         ].head(settings.flex_slots)
         total += flex_eligible["total_points_actual"].sum()
-
         return total
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Main backtest runner
-    # ──────────────────────────────────────────────────────────────────────
 
     def run_backtest(
         self,
@@ -513,58 +414,32 @@ class RedraftBacktester:
         logger.info(f"{'=' * 60}")
 
         # Step 1: Build pre-season rankings (prior data only)
-        vorp_rankings = self._build_pre_season_rankings(
-            target_season, lookback_years
-        )
+        vorp_rankings = self._build_pre_season_rankings(target_season, lookback_years)
         adp_rankings = self._build_adp_rankings(vorp_rankings)
 
         # Step 2: Get actual season results (ground truth)
         actual_points = self._get_actual_season_points(target_season)
 
         # Step 3: Simulate drafts at each pick position
-        vorp_results = []
-        adp_results = []
-
+        vorp_results, adp_results = [], []
         for pick_pos in pick_positions:
             logger.info(f"\n--- Simulating pick position #{pick_pos} ---")
 
-            # VORP draft
-            vorp_picks = self._simulate_snake_draft(
-                vorp_rankings, "vorp_rank", pick_pos, "vorp"
-            )
-            vorp_total, vorp_roster = self._score_roster(
-                vorp_picks, actual_points
-            )
-            vorp_result = DraftResult(
-                pick_position=pick_pos,
-                roster=vorp_roster,
-                total_actual_points=vorp_total,
-                total_projected_points=sum(
-                    p["projected_total"] for p in vorp_picks
-                ),
-                strategy="vorp",
-                draft_log=vorp_picks,
-            )
-            vorp_results.append(vorp_result)
+            vorp_picks = self._simulate_snake_draft(vorp_rankings, "vorp_rank", pick_pos, "vorp")
+            vorp_total, vorp_roster = self._score_roster(vorp_picks, actual_points)
+            vorp_results.append(DraftResult(
+                pick_position=pick_pos, roster=vorp_roster, total_actual_points=vorp_total,
+                total_projected_points=sum(p["projected_total"] for p in vorp_picks),
+                strategy="vorp", draft_log=vorp_picks,
+            ))
 
-            # ADP draft
-            adp_picks = self._simulate_snake_draft(
-                adp_rankings, "adp_rank", pick_pos, "adp"
-            )
-            adp_total, adp_roster = self._score_roster(
-                adp_picks, actual_points
-            )
-            adp_result = DraftResult(
-                pick_position=pick_pos,
-                roster=adp_roster,
-                total_actual_points=adp_total,
-                total_projected_points=sum(
-                    p["projected_total"] for p in adp_picks
-                ),
-                strategy="adp",
-                draft_log=adp_picks,
-            )
-            adp_results.append(adp_result)
+            adp_picks = self._simulate_snake_draft(adp_rankings, "adp_rank", pick_pos, "adp")
+            adp_total, adp_roster = self._score_roster(adp_picks, actual_points)
+            adp_results.append(DraftResult(
+                pick_position=pick_pos, roster=adp_roster, total_actual_points=adp_total,
+                total_projected_points=sum(p["projected_total"] for p in adp_picks),
+                strategy="adp", draft_log=adp_picks,
+            ))
 
             alpha = vorp_total - adp_total
             logger.info(
@@ -574,7 +449,6 @@ class RedraftBacktester:
 
         # Step 4: Compile results
         summary = self._compile_summary(vorp_results, adp_results, target_season)
-
         return {
             "summary": summary,
             "pick_results": self._build_pick_comparison(vorp_results, adp_results),
@@ -592,47 +466,18 @@ class RedraftBacktester:
         """Compile high-level summary statistics."""
         vorp_totals = [r.total_actual_points for r in vorp_results]
         adp_totals = [r.total_actual_points for r in adp_results]
-
         alphas = [v - a for v, a in zip(vorp_totals, adp_totals)]
-
-        summary = pd.DataFrame(
-            {
-                "metric": [
-                    "Season",
-                    "Avg VORP Points",
-                    "Avg ADP Points",
-                    "Avg Alpha (VORP - ADP)",
-                    "Median Alpha",
-                    "Win Rate (VORP > ADP)",
-                    "Max Alpha",
-                    "Min Alpha",
-                    "Best Pick Position (VORP)",
-                    "Worst Pick Position (VORP)",
-                ],
-                "value": [
-                    target_season,
-                    f"{np.mean(vorp_totals):.1f}",
-                    f"{np.mean(adp_totals):.1f}",
-                    f"{np.mean(alphas):+.1f}",
-                    f"{np.median(alphas):+.1f}",
-                    f"{sum(1 for a in alphas if a > 0)}/{len(alphas)} "
-                    f"({sum(1 for a in alphas if a > 0) / len(alphas):.0%})",
-                    f"{max(alphas):+.1f}",
-                    f"{min(alphas):+.1f}",
-                    str(
-                        vorp_results[
-                            np.argmax(vorp_totals)
-                        ].pick_position
-                    ),
-                    str(
-                        vorp_results[
-                            np.argmin(vorp_totals)
-                        ].pick_position
-                    ),
-                ],
-            }
-        )
-        return summary
+        return pd.DataFrame({
+            "metric": ["Season","Avg VORP Points","Avg ADP Points","Avg Alpha (VORP - ADP)",
+                        "Median Alpha","Win Rate (VORP > ADP)","Max Alpha","Min Alpha",
+                        "Best Pick Position (VORP)","Worst Pick Position (VORP)"],
+            "value": [target_season, f"{np.mean(vorp_totals):.1f}", f"{np.mean(adp_totals):.1f}",
+                      f"{np.mean(alphas):+.1f}", f"{np.median(alphas):+.1f}",
+                      f"{sum(1 for a in alphas if a > 0)}/{len(alphas)} ({sum(1 for a in alphas if a > 0)/len(alphas):.0%})",
+                      f"{max(alphas):+.1f}", f"{min(alphas):+.1f}",
+                      str(vorp_results[np.argmax(vorp_totals)].pick_position),
+                      str(vorp_results[np.argmin(vorp_totals)].pick_position)],
+        })
 
     def _build_pick_comparison(
         self,
@@ -643,22 +488,13 @@ class RedraftBacktester:
         rows = []
         for vr, ar in zip(vorp_results, adp_results):
             alpha = vr.total_actual_points - ar.total_actual_points
-            rows.append(
-                {
-                    "pick_position": vr.pick_position,
-                    "vorp_actual_points": vr.total_actual_points,
-                    "adp_actual_points": ar.total_actual_points,
-                    "alpha": alpha,
-                    "vorp_wins": alpha > 0,
-                    "vorp_projected_points": vr.total_projected_points,
-                    "adp_projected_points": ar.total_projected_points,
-                }
-            )
+            rows.append({"pick_position": vr.pick_position,
+                         "vorp_actual_points": vr.total_actual_points,
+                         "adp_actual_points": ar.total_actual_points, "alpha": alpha,
+                         "vorp_wins": alpha > 0,
+                         "vorp_projected_points": vr.total_projected_points,
+                         "adp_projected_points": ar.total_projected_points})
         return pd.DataFrame(rows)
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Multi-season backtest
-    # ──────────────────────────────────────────────────────────────────────
 
     def run_multi_season_backtest(
         self,
@@ -673,51 +509,27 @@ class RedraftBacktester:
         """
         if seasons is None:
             seasons = [2020, 2021, 2022, 2023, 2024]
-
-        all_results = {}
-        all_alphas = []
-
+        all_results, all_alphas = {}, []
         for season in seasons:
             logger.info(f"\n{'#' * 60}")
             logger.info(f"# SEASON: {season}")
             logger.info(f"{'#' * 60}")
-
-            result = self.run_backtest(
-                target_season=season,
-                lookback_years=lookback_years,
-            )
+            result = self.run_backtest(target_season=season, lookback_years=lookback_years)
             all_results[season] = result
-
-            # Collect alphas across all pick positions
-            pick_df = result["pick_results"]
-            for _, row in pick_df.iterrows():
-                all_alphas.append(
-                    {
-                        "season": season,
-                        "pick_position": row["pick_position"],
-                        "alpha": row["alpha"],
-                        "vorp_points": row["vorp_actual_points"],
-                        "adp_points": row["adp_actual_points"],
-                    }
-                )
-
+            for _, row in result["pick_results"].iterrows():
+                all_alphas.append({"season": season, "pick_position": row["pick_position"],
+                                   "alpha": row["alpha"], "vorp_points": row["vorp_actual_points"],
+                                   "adp_points": row["adp_actual_points"]})
         alpha_df = pd.DataFrame(all_alphas)
-
-        # Statistical summary across all seasons
         multi_summary = {
-            "seasons_tested": seasons,
-            "total_matchups": len(alpha_df),
+            "seasons_tested": seasons, "total_matchups": len(alpha_df),
             "overall_win_rate": (alpha_df["alpha"] > 0).mean(),
-            "avg_alpha": alpha_df["alpha"].mean(),
-            "median_alpha": alpha_df["alpha"].median(),
+            "avg_alpha": alpha_df["alpha"].mean(), "median_alpha": alpha_df["alpha"].median(),
             "std_alpha": alpha_df["alpha"].std(),
             "alpha_by_season": alpha_df.groupby("season")["alpha"].mean().to_dict(),
             "alpha_by_pick": alpha_df.groupby("pick_position")["alpha"].mean().to_dict(),
-            "season_results": all_results,
-            "full_alpha_data": alpha_df,
+            "season_results": all_results, "full_alpha_data": alpha_df,
         }
-
-        # Log the punchline
         logger.info(f"\n{'=' * 60}")
         logger.info("MULTI-SEASON BACKTEST RESULTS")
         logger.info(f"{'=' * 60}")
@@ -726,5 +538,4 @@ class RedraftBacktester:
         logger.info(f"VORP Win Rate: {multi_summary['overall_win_rate']:.1%}")
         logger.info(f"Avg Alpha: {multi_summary['avg_alpha']:+.1f} points")
         logger.info(f"Median Alpha: {multi_summary['median_alpha']:+.1f} points")
-
         return multi_summary

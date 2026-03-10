@@ -18,7 +18,7 @@ class SleeperClient:
 
     BASE_URL = "https://api.sleeper.app/v1"
 
-    def __init__(self, league_id: str, rate_limit_per_min: int = 60):
+    def __init__(self, league_id: str = "", rate_limit_per_min: int = 100):
         self.league_id = league_id
         self.min_interval = 60.0 / rate_limit_per_min
         self._last_request_time = 0.0
@@ -96,6 +96,19 @@ class SleeperClient:
             )
             logger.info(f"Cached {len(self._player_cache)} players")
         return self._player_cache
+
+    def get_weekly_stats(
+        self, season: int, week: int, season_type: str = "regular"
+    ) -> dict[str, Any]:
+        """Get stats for all players for a given week.
+
+        Returns a dict of player_id -> stats object with keys like
+        pts_ppr, pts_std, pts_half_ppr, rec, rec_yd, rec_td, rush_yd,
+        rush_td, pass_yd, pass_td, pass_int, etc.
+        """
+        return self._rate_limited_get(
+            f"{self.BASE_URL}/stats/nfl/{season_type}/{season}/{week}"
+        )
 
     def get_trending_players(
         self, sport: str = "nfl", trend_type: str = "add", lookback_hours: int = 24, limit: int = 25
