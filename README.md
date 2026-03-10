@@ -115,7 +115,7 @@ nfl-dynasty-analytics/
 - [x] Positional scarcity analysis
 - [x] Streamlit draft helper dashboard
 - [x] Sleeper API client with history traversal
-- [ ] Live draft board with pick tracking
+- [x] Live draft board with pick tracking
 - [ ] Trade sentiment model
-- [ ] Drop-off prediction pipeline
-- [ ] NFL Fantasy app data integration
+- [x] Drop-off prediction pipeline
+- [x] Sleeper app data integration
