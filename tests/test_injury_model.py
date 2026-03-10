@@ -249,4 +249,4 @@ class TestInjuryReport:
         report = adjuster.injury_report()
         assert len(report) == 1
         assert report.iloc[0]["player_name"] == "Tyreek Hill"
-        assert report.iloc[0]["surgery"] is True
+        assert report.iloc[0]["surgery"] == True
