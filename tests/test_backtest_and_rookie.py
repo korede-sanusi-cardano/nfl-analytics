@@ -9,6 +9,7 @@ These tests use synthetic data so they run without nfl_data_py or network access
 import numpy as np
 import pandas as pd
 import pytest
+import unittest
 
 from src.models.backtest import (
     DraftResult,
@@ -28,7 +29,6 @@ from src.models.vorp import LeagueSettings, VORPCalculator
 # ══════════════════════════════════════════════════════════════════════
 # Fixtures — synthetic data that mirrors real nfl_data_py output
 # ══════════════════════════════════════════════════════════════════════
-
 
 @pytest.fixture
 def player_pool():
@@ -344,8 +344,8 @@ class TestSummaryCompilation:
         assert len(comparison) == 2
         assert comparison.iloc[0]["alpha"] == 100
         assert comparison.iloc[1]["alpha"] == -50
-        assert comparison.iloc[0]["vorp_wins"] is True
-        assert comparison.iloc[1]["vorp_wins"] is False
+        assert comparison.iloc[0]["vorp_wins"] == True
+        assert comparison.iloc[1]["vorp_wins"] == False
 
 
 # ══════════════════════════════════════════════════════════════════════
