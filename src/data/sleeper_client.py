@@ -131,6 +131,48 @@ class SleeperClient:
             f"{self.BASE_URL}/user/{user_id}/leagues/{sport}/{season}"
         )
 
+    # -- Projections & box-score stats (non-versioned endpoints) --
+
+    PROJECTIONS_URL = "https://api.sleeper.app"
+
+    def get_nfl_state(self) -> dict:
+        """Get the current NFL season/week state (season, week, season_type)."""
+        return self._rate_limited_get(f"{self.BASE_URL}/state/nfl")
+
+    def get_weekly_projections(
+        self,
+        season: int,
+        week: int,
+        positions: tuple[str, ...] = ("QB", "RB", "WR", "TE"),
+        season_type: str = "regular",
+    ) -> list[dict]:
+        """Get Sleeper's weekly projections for every player at the given positions.
+
+        Each entry has ``player_id``, ``team``, ``opponent`` (``None`` on a bye),
+        a ``stats`` dict of projected counting stats and a ``player`` dict with
+        name, position and ``injury_status``.
+        """
+        pos_q = "".join(f"&position[]={p}" for p in positions)
+        return self._rate_limited_get(
+            f"{self.PROJECTIONS_URL}/projections/nfl/{season}/{week}"
+            f"?season_type={season_type}{pos_q}"
+        )
+
+    def get_weekly_player_stats(
+        self,
+        season: int,
+        week: int,
+        positions: tuple[str, ...] = ("QB", "RB", "WR", "TE"),
+        season_type: str = "regular",
+    ) -> list[dict]:
+        """Get actual box-score stats for a completed week, including usage
+        detail (targets, air yards, red-zone carries/targets, snaps)."""
+        pos_q = "".join(f"&position[]={p}" for p in positions)
+        return self._rate_limited_get(
+            f"{self.PROJECTIONS_URL}/stats/nfl/{season}/{week}"
+            f"?season_type={season_type}{pos_q}"
+        )
+
     # -- Convenience methods --
 
     def get_league_history(self, current_league_id: str | None = None) -> list[str]:
