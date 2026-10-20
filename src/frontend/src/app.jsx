@@ -11,6 +11,13 @@ import {
 const API_BASE = "http://localhost:8000/api";
 const DEFAULT_LEAGUE = "1311316930342195200";
 
+// Redraft leagues for the Trade tab. `me` identifies your team on each platform.
+const TRADE_LEAGUES = [
+  { label: "Sweaty Fun · Sleeper", platform: "sleeper", id: "1395411491770888192", me: { me_username: "ksanusi17" } },
+  { label: "Beefcakes 2.0 · ESPN", platform: "espn", id: "1985088560", me: { me_first: "Korede", me_last: "Sanusi" } },
+  { label: "ESPN 547335430", platform: "espn", id: "547335430", me: { me_first: "Korede", me_last: "Sanusi" } },
+];
+
 const POS = {
   QB:  { color: "#ef4444", bg: "rgba(239,68,68,0.10)", glow: "rgba(239,68,68,0.25)" },
   RB:  { color: "#22c55e", bg: "rgba(34,197,94,0.10)",  glow: "rgba(34,197,94,0.25)" },
@@ -94,6 +101,7 @@ export default function App() {
     { id: "aging",    label: "AGING CURVES", icon: "📈" },
     { id: "scarcity", label: "SCARCITY",     icon: "⚖️" },
     { id: "compare",  label: "COMPARE",      icon: "🔍" },
+    { id: "trade",    label: "TRADE",        icon: "🔁" },
   ];
 
   return (
@@ -189,6 +197,8 @@ export default function App() {
           <ScarcityPage leagueId={leagueId} />
         ) : page === "compare" ? (
           <ComparePage leagueId={leagueId} />
+        ) : page === "trade" ? (
+          <TradePage />
         ) : null}
       </main>
     </div>
@@ -898,6 +908,250 @@ function ComparePage({ leagueId }) {
         <Card style={{ padding: 40, textAlign: "center" }}>
           <p style={{ color: T.textMuted, fontSize: 13 }}>Select two players to compare side-by-side.</p>
         </Card>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// TRADE PAGE (redraft trade analyser — live Sleeper + ESPN)
+// ═══════════════════════════════════════════════════════════
+
+const pct = (x) => (x == null ? "—" : `${(100 * x).toFixed(1)}%`);
+const signed = (x, d = 1, suf = "") => (x == null ? "—" : `${x >= 0 ? "+" : ""}${x.toFixed(d)}${suf}`);
+const tone = (x) => (x > 0 ? T.green : x < 0 ? T.red : T.textDim);
+
+const VERDICTS = {
+  accept_mutual: { text: "Good for you, and their lineup improves too — likely to be accepted.", color: "#22c55e" },
+  accept: { text: "Good for you. Their lineup gets worse, so they may need convincing.", color: "#22c55e" },
+  neutral: { text: "Roughly neutral — within simulation noise. Decide on risk and roster fit.", color: "#eab308" },
+  decline: { text: "Bad for you. Decline or ask for more.", color: "#ef4444" },
+};
+
+function TradePage() {
+  const [preset, setPreset] = useState(0);
+  const [data, setData] = useState(null);
+  const [me, setMe] = useState(null);
+  const [partner, setPartner] = useState(null);
+  const [give, setGive] = useState([]);
+  const [get, setGet] = useState([]);
+  const [sims, setSims] = useState(5000);
+  const [marketWeight, setMarketWeight] = useState(0.5);
+  const [autoFill, setAutoFill] = useState(true);
+  const [result, setResult] = useState(null);
+  const [ideas, setIdeas] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState(null);
+
+  const lg = TRADE_LEAGUES[preset];
+
+  const load = useCallback(async (refresh = false) => {
+    setBusy("Fetching live league data and simulating the season…");
+    setErr(null); setResult(null); setIdeas(null);
+    try {
+      const q = new URLSearchParams({ sims, market_weight: marketWeight, refresh, ...lg.me });
+      const d = await api(`/trade/league/${lg.platform}/${lg.id}?${q}`);
+      setData(d);
+      const myId = d.me ?? d.teams[0]?.team_id;
+      setMe(myId);
+      setPartner(d.teams.find((t) => t.team_id !== myId)?.team_id ?? null);
+      setGive([]); setGet([]);
+    } catch (e) {
+      setData(null); setErr(e.message);
+    }
+    setBusy("");
+  }, [lg, sims, marketWeight]);
+
+  useEffect(() => { load(false); }, [preset]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const teamById = useMemo(() => Object.fromEntries((data?.teams || []).map((t) => [t.team_id, t])), [data]);
+  const myTeam = teamById[me];
+  const theirTeam = teamById[partner];
+
+  const body = (extra = {}) => JSON.stringify({
+    platform: lg.platform, league_id: lg.id, me, partner, give, get,
+    sims, market_weight: marketWeight, auto_fill: autoFill, ...extra,
+  });
+
+  const evaluate = async (override) => {
+    setBusy("Simulating with and without the trade…"); setErr(null);
+    try {
+      const r = await api("/trade/evaluate", { method: "POST", headers: { "Content-Type": "application/json" }, body: body(override) });
+      setResult(r);
+    } catch (e) { setErr(e.message); }
+    setBusy("");
+  };
+
+  const search = async () => {
+    setBusy("Searching 1-for-1, 2-for-1 and 1-for-2 deals…"); setErr(null);
+    try {
+      const r = await api("/trade/search", { method: "POST", headers: { "Content-Type": "application/json" }, body: body() });
+      setIdeas(r);
+    } catch (e) { setErr(e.message); }
+    setBusy("");
+  };
+
+  const toggle = (list, setList, id) => setList(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+  const inputStyle = { background: T.bg2, border: `1px solid ${T.border}`, borderRadius: T.radius, padding: "6px 10px", color: T.text, fontSize: 11, fontFamily: T.font };
+  const btn = (primary) => ({ background: primary ? T.accent : "transparent", border: `1px solid ${primary ? T.accent : T.border}`, borderRadius: T.radius, padding: "7px 14px", color: primary ? "#fff" : T.text, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: T.font });
+
+  const RosterList = ({ team, selected, setSelected }) => (
+    <div style={{ maxHeight: 420, overflowY: "auto" }}>
+      {(team?.players || []).map((p) => {
+        const on = selected.includes(p.player_id);
+        return (
+          <label key={p.player_id} style={{
+            display: "grid", gridTemplateColumns: "18px 1fr auto", gap: 8, alignItems: "center",
+            padding: "6px 8px", borderRadius: T.radius, cursor: "pointer",
+            background: on ? T.accentGlow : "transparent", borderBottom: `1px solid ${T.border}22`,
+          }}>
+            <input type="checkbox" checked={on} onChange={() => toggle(selected, setSelected, p.player_id)} />
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>
+              <PosBadge pos={p.position} /> <b>{p.name}</b>
+              {p.injury_status && <span style={{ color: T.yellow, fontSize: 10, marginLeft: 6 }}>{p.injury_status}</span>}
+              <div style={{ fontSize: 10, color: T.textMuted }}>{p.team || "FA"} · bye {p.bye_week ?? "—"} · {p.games} gms</div>
+            </span>
+            <span style={{ textAlign: "right", fontSize: 12, fontWeight: 700 }}>
+              {p.ppg.toFixed(1)}
+              <div style={{ fontSize: 9, color: T.textMuted, fontWeight: 400 }}>mkt {p.market_ppg.toFixed(1)} · use {p.usage_ppg.toFixed(1)}</div>
+            </span>
+          </label>
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+        <SectionTitle>🔁 Redraft Trade Analyser</SectionTitle>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <select value={preset} onChange={(e) => setPreset(+e.target.value)} style={inputStyle}>
+            {TRADE_LEAGUES.map((l, i) => <option key={l.id} value={i}>{l.label}</option>)}
+          </select>
+          <label style={{ fontSize: 11, color: T.textMuted }} title="Weight on Sleeper consensus projections vs. this season's usage model">
+            Market wt <input type="number" min={0} max={1} step={0.1} value={marketWeight} onChange={(e) => setMarketWeight(+e.target.value)} style={{ ...inputStyle, width: 56 }} />
+          </label>
+          <select value={sims} onChange={(e) => setSims(+e.target.value)} style={inputStyle}>
+            {[2000, 5000, 10000].map((n) => <option key={n} value={n}>{n.toLocaleString()} sims</option>)}
+          </select>
+          <button onClick={() => load(true)} style={btn(false)}>🔄 LIVE REFRESH</button>
+        </div>
+      </div>
+
+      {busy && <Card style={{ padding: "10px 14px", marginBottom: 12, fontSize: 12, color: T.accentText }}>⏳ {busy}</Card>}
+      {err && <Card style={{ padding: "10px 14px", marginBottom: 12, fontSize: 12, color: "#fca5a5", borderColor: "rgba(239,68,68,0.3)" }}>{err}</Card>}
+
+      {data && (
+        <>
+          <Card style={{ overflow: "hidden", marginBottom: 12 }}>
+            <div style={{ padding: "10px 14px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 700 }}>{data.league.name}</span>
+              <span style={{ fontSize: 11, color: T.textMuted }}>
+                NFL week {data.nfl_week} · {data.league.regular_weeks.length} reg-season weeks left · {data.league.playoff_teams} playoff spots
+              </span>
+            </div>
+            <DataTable
+              maxHeight={360}
+              columns={[
+                { key: "name", label: "TEAM", bold: true, render: (r) => <span style={{ color: r.team_id === me ? T.accentText : T.text }}>{r.team_id === me ? "▶ " : ""}{r.name}</span> },
+                { key: "owner", label: "MANAGER", color: () => T.textDim },
+                { key: "rec", label: "W-L", align: "center", render: (r) => `${r.wins}-${r.losses}` },
+                { key: "points_for", label: "PF", align: "center", render: (r) => r.points_for.toFixed(1) },
+                { key: "lineup_ppg", label: "LINEUP/WK", align: "center" },
+                { key: "playoff_week_ppg", label: "PLAYOFF WKS", align: "center" },
+                { key: "expected_wins", label: "EXP W", align: "center", render: (r) => r.expected_wins.toFixed(1) },
+                { key: "playoff_odds", label: "PLAYOFF %", align: "center", bold: true, color: () => T.accentText, render: (r) => pct(r.playoff_odds) },
+              ]}
+              rows={data.teams}
+            />
+          </Card>
+
+          <Card style={{ padding: "10px 14px", marginBottom: 12, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <label style={{ fontSize: 11, color: T.textMuted }}>You:{" "}
+              <select value={me ?? ""} onChange={(e) => { setMe(+e.target.value); setGive([]); }} style={inputStyle}>
+                {data.teams.map((t) => <option key={t.team_id} value={t.team_id}>{t.name}</option>)}
+              </select>
+            </label>
+            <label style={{ fontSize: 11, color: T.textMuted }}>Partner:{" "}
+              <select value={partner ?? ""} onChange={(e) => { setPartner(+e.target.value); setGet([]); }} style={inputStyle}>
+                {data.teams.filter((t) => t.team_id !== me).map((t) => <option key={t.team_id} value={t.team_id}>{t.name} ({t.wins}-{t.losses})</option>)}
+              </select>
+            </label>
+            <label style={{ fontSize: 11, color: T.textMuted, display: "flex", gap: 4, alignItems: "center" }}>
+              <input type="checkbox" checked={autoFill} onChange={(e) => setAutoFill(e.target.checked)} /> Fill open spots from free agency
+            </label>
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              <button onClick={() => { setGive([]); setGet([]); setResult(null); }} style={btn(false)}>CLEAR</button>
+              <button disabled={!!busy || !(give.length || get.length)} onClick={() => evaluate()} style={btn(true)}>EVALUATE TRADE</button>
+            </div>
+          </Card>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12, marginBottom: 12 }}>
+            <Card style={{ padding: 12 }}>
+              <div style={{ fontSize: 11, color: T.textMuted, fontWeight: 700, marginBottom: 8 }}>YOU GIVE · {myTeam?.name}</div>
+              <RosterList team={myTeam} selected={give} setSelected={setGive} />
+            </Card>
+            <Card style={{ padding: 12 }}>
+              <div style={{ fontSize: 11, color: T.textMuted, fontWeight: 700, marginBottom: 8 }}>YOU GET · {theirTeam?.name}</div>
+              <RosterList team={theirTeam} selected={get} setSelected={setGet} />
+            </Card>
+          </div>
+
+          {result && (
+            <Card style={{ padding: 16, marginBottom: 12, borderColor: VERDICTS[result.verdict].color + "55" }}>
+              <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 6 }}>
+                {result.give.join(" + ") || "nothing"} → {result.get.join(" + ") || "nothing"} · {result.partner_name}
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: VERDICTS[result.verdict].color, marginBottom: 14, fontFamily: T.fontDisplay }}>
+                {VERDICTS[result.verdict].text}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-around", flexWrap: "wrap", gap: 14 }}>
+                <Metric label={`YOUR PLAYOFF ODDS (${pct(result.playoff_odds_before)} → ${pct(result.playoff_odds_after)})`} value={signed(100 * result.playoff_odds_change, 1, " pp")} color={tone(result.playoff_odds_change)} />
+                <Metric label="YOUR LINEUP, PTS/WK" value={signed(result.lineup_change)} color={tone(result.lineup_change)} />
+                <Metric label="PLAYOFF-WEEK LINEUP" value={signed(result.playoff_week_lineup_change)} color={tone(result.playoff_week_lineup_change)} />
+                <Metric label="THEIR LINEUP, PTS/WK" value={signed(result.partner_lineup_change)} color={tone(result.partner_lineup_change)} />
+                <Metric label="THEIR PLAYOFF ODDS" value={signed(100 * result.partner_odds_change, 1, " pp")} color={tone(result.partner_odds_change)} />
+              </div>
+              {(result.my_drops.length > 0 || result.my_adds.length > 0 || result.partner_drops.length > 0) && (
+                <div style={{ fontSize: 11, color: T.textMuted, marginTop: 12 }}>
+                  Roster moves assumed:
+                  {result.my_drops.length > 0 && ` you drop ${result.my_drops.join(", ")};`}
+                  {result.my_adds.length > 0 && ` you add ${result.my_adds.join(", ")};`}
+                  {result.partner_drops.length > 0 && ` they drop ${result.partner_drops.join(", ")}.`}
+                </div>
+              )}
+              <div style={{ fontSize: 10, color: T.textFaint, marginTop: 6 }}>{result.sims.toLocaleString()} paired simulations · differences under ~1 pp are noise</div>
+            </Card>
+          )}
+
+          <Card style={{ overflow: "hidden" }}>
+            <div style={{ padding: "10px 14px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <SectionTitle>💡 Trade ideas</SectionTitle>
+              <button disabled={!!busy} onClick={search} style={btn(false)}>SEARCH DEALS</button>
+            </div>
+            {ideas == null ? (
+              <div style={{ padding: 16, fontSize: 12, color: T.textMuted }}>Finds deals where both expected lineups improve, ranked by your change in playoff odds.</div>
+            ) : ideas.length === 0 ? (
+              <div style={{ padding: 16, fontSize: 12, color: T.textMuted }}>No mutually beneficial deal found.</div>
+            ) : (
+              <DataTable
+                columns={[
+                  { key: "give", label: "YOU GIVE", render: (r) => r.give.join(" + ") },
+                  { key: "get", label: "YOU GET", bold: true, render: (r) => r.get.join(" + ") },
+                  { key: "partner_name", label: "TEAM", color: () => T.textDim },
+                  { key: "playoff_odds_change", label: "YOUR ODDS", align: "center", bold: true, color: (r) => tone(r.playoff_odds_change), render: (r) => signed(100 * r.playoff_odds_change, 1, " pp") },
+                  { key: "lineup_change", label: "YOUR LINEUP", align: "center", render: (r) => signed(r.lineup_change) },
+                  { key: "partner_lineup_change", label: "THEIR LINEUP", align: "center", render: (r) => signed(r.partner_lineup_change) },
+                  { key: "load", label: "", render: (r) => (
+                    <button style={btn(false)} onClick={() => { setPartner(r.partner); setGive(r.give_ids); setGet(r.get_ids); setResult(r); }}>LOAD</button>
+                  ) },
+                ]}
+                rows={ideas}
+              />
+            )}
+          </Card>
+        </>
       )}
     </div>
   );

@@ -26,10 +26,14 @@ Endpoints:
     GET  /api/draft/{league_id}/state/{id}    — live draft state + picks
     GET  /api/draft/{league_id}/available/{id}— best available by VORP
     GET  /api/sleeper/{path:path}             — proxy any Sleeper API call
+    GET  /api/trade/league/{platform}/{id}    — redraft trade desk: standings, values, playoff odds
+    POST /api/trade/evaluate                  — playoff-odds impact of a proposed trade
+    POST /api/trade/search                    — search mutually beneficial trades
 """
 
 import re
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -737,3 +741,169 @@ async def get_rookie_projections(
         raise HTTPException(status_code=503, detail="Rookie model not available")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Redraft trade analyser (live Sleeper + ESPN)
+# ──────────────────────────────────────────────────────────────────────
+
+# Live data is re-fetched after these many seconds, or on ?refresh=true
+NFL_DATA_TTL = 300
+LEAGUE_TTL = 120
+_trade_cache: dict[str, tuple[float, Any]] = {}
+
+
+class TradeRequest(BaseModel):
+    platform: str  # "sleeper" | "espn"
+    league_id: str
+    me: int
+    partner: int | None = None
+    give: list[str] = []
+    get: list[str] = []
+    sims: int = 5000
+    market_weight: float = 0.5
+    auto_fill: bool = True
+
+
+def _cached(key: str, ttl: int, refresh: bool, loader):
+    hit = _trade_cache.get(key)
+    if hit and not refresh and time.time() - hit[0] < ttl:
+        return hit[1]
+    value = loader()
+    _trade_cache[key] = (time.time(), value)
+    return value
+
+
+def _trade_analyser(
+    platform: str,
+    league_id: str,
+    market_weight: float,
+    refresh: bool = False,
+    me_username: str | None = None,
+    me_first: str | None = None,
+    me_last: str | None = None,
+):
+    from src.data.espn_client import EspnClient, EspnPrivateLeagueError
+    from src.models.redraft_trade import (
+        RedraftTradeAnalyser,
+        load_espn_league,
+        load_nfl_week_data,
+        load_sleeper_league,
+    )
+
+    nfl = _cached("nfl", NFL_DATA_TTL, refresh, lambda: load_nfl_week_data(SleeperClient()))
+
+    def load_league():
+        if platform == "sleeper":
+            return load_sleeper_league(SleeperClient(league_id=league_id), nfl, me_username)
+        if platform == "espn":
+            try:
+                return load_espn_league(EspnClient(league_id, nfl.season), nfl, me_first, me_last)
+            except EspnPrivateLeagueError as e:
+                raise HTTPException(status_code=403, detail=str(e)) from e
+        raise HTTPException(status_code=400, detail="platform must be 'sleeper' or 'espn'")
+
+    try:
+        league = _cached(f"league:{platform}:{league_id}", LEAGUE_TTL, refresh, load_league)
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"{platform} API error: {e}") from e
+    return RedraftTradeAnalyser(nfl, league, market_weight=market_weight)
+
+
+@app.get("/api/trade/league/{platform}/{league_id}")
+def trade_league(
+    platform: str,
+    league_id: str,
+    sims: int = Query(default=5000, ge=500, le=20000),
+    market_weight: float = Query(default=0.5, ge=0, le=1),
+    refresh: bool = Query(default=False, description="Bypass the short live-data cache"),
+    me_username: str | None = Query(default=None, description="Sleeper display name to mark as you"),
+    me_first: str | None = Query(default=None, description="ESPN first name to mark as you"),
+    me_last: str | None = Query(default=None, description="ESPN last name to mark as you"),
+):
+    """Standings, rest-of-season player values and baseline playoff odds for a league."""
+    an = _trade_analyser(platform, league_id, market_weight, refresh, me_username, me_first, me_last)
+    lg = an.league
+    odds = an.simulate(n_sims=sims)
+    teams = []
+    for t in lg.teams.values():
+        teams.append({
+            "team_id": t.team_id,
+            "name": t.name,
+            "owner": t.owner,
+            "wins": t.wins,
+            "losses": t.losses,
+            "points_for": round(t.points_for, 2),
+            "lineup_ppg": round(an.lineup_ev_avg(t.players, lg.regular_weeks), 1),
+            "playoff_week_ppg": round(an.lineup_ev_avg(t.players, lg.playoff_weeks), 1),
+            **{k: round(v, 4) for k, v in odds[t.team_id].items()},
+            "players": sorted(
+                (an.values[s].to_dict() for s in t.players if s in an.values),
+                key=lambda p: ("QB", "RB", "WR", "TE").index(p["position"]) * 1000 - p["ppg"],
+            ),
+        })
+    return {
+        "league": {
+            "name": lg.name,
+            "platform": lg.platform,
+            "league_id": lg.league_id,
+            "regular_weeks": lg.regular_weeks,
+            "playoff_weeks": lg.playoff_weeks,
+            "playoff_teams": lg.playoff_teams,
+        },
+        "me": lg.me,
+        "nfl_week": an.nfl.week,
+        "season": an.nfl.season,
+        "fetched_at": _trade_cache.get(f"league:{platform}:{league_id}", (time.time(),))[0],
+        "unmatched_players": lg.unmatched_players,
+        "teams": sorted(teams, key=lambda t: -t["playoff_odds"]),
+    }
+
+
+def _trade_result_json(an, r) -> dict:
+    def names(ids):
+        return [an.values[s].name if s in an.values else s for s in ids]
+
+    return {
+        "give": names(r.give),
+        "get": names(r.get),
+        "give_ids": r.give,
+        "get_ids": r.get,
+        "partner": r.partner,
+        "partner_name": an.league.teams[r.partner].name,
+        "playoff_odds_before": round(r.playoff_odds_before, 4),
+        "playoff_odds_after": round(r.playoff_odds_after, 4),
+        "playoff_odds_change": round(r.playoff_odds_change, 4),
+        "partner_odds_change": round(r.partner_odds_after - r.partner_odds_before, 4),
+        "expected_wins_change": round(r.expected_wins_change, 3),
+        "lineup_change": round(r.lineup_change, 2),
+        "playoff_week_lineup_change": round(r.playoff_week_lineup_change, 2),
+        "partner_lineup_change": round(r.partner_lineup_change, 2),
+        "my_drops": names(r.my_drops),
+        "my_adds": names(r.my_adds),
+        "partner_drops": names(r.partner_drops),
+        "verdict": r.verdict(),
+        "sims": r.sims,
+    }
+
+
+@app.post("/api/trade/evaluate")
+def trade_evaluate(req: TradeRequest):
+    """Playoff-odds impact of a proposed trade, for you and your trade partner."""
+    if req.partner is None or not (req.give or req.get):
+        raise HTTPException(status_code=400, detail="Choose a partner and at least one player")
+    an = _trade_analyser(req.platform, req.league_id, req.market_weight)
+    if req.me not in an.league.teams or req.partner not in an.league.teams:
+        raise HTTPException(status_code=404, detail="Unknown team id")
+    result = an.evaluate_trade(req.me, req.partner, req.give, req.get, req.sims, req.auto_fill)
+    return _trade_result_json(an, result)
+
+
+@app.post("/api/trade/search")
+def trade_search(req: TradeRequest):
+    """Search 1-for-1, 2-for-1 and 1-for-2 deals where both lineups improve."""
+    an = _trade_analyser(req.platform, req.league_id, req.market_weight)
+    if req.me not in an.league.teams:
+        raise HTTPException(status_code=404, detail="Unknown team id")
+    results = an.search_trades(req.me, n_sims=min(req.sims, 3000), auto_fill=req.auto_fill)
+    return [_trade_result_json(an, r) for r in results]

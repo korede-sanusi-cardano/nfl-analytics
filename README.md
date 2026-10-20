@@ -67,11 +67,13 @@ The dashboard opens at `http://localhost:8501`
 nfl-dynasty-analytics/
 ├── src/
 │   ├── data/
-│   │   ├── sleeper_client.py      # Sleeper API wrapper
+│   │   ├── sleeper_client.py      # Sleeper API wrapper (+ weekly projections & box scores)
+│   │   ├── espn_client.py         # ESPN fantasy league API wrapper
 │   │   └── nfl_stats.py           # nfl_data_py interface
 │   ├── models/
 │   │   ├── vorp.py                # VORP & Dynasty VORP calculations
 │   │   ├── trade_analyzer.py      # Trade sentiment analysis
+│   │   ├── redraft_trade.py       # Redraft trade analyser (playoff-odds Monte Carlo)
 │   │   └── dropoff_predictor.py   # ML model for production decline
 │   ├── pipeline/
 │   │   └── (ETL & scheduling — coming soon)
@@ -98,6 +100,18 @@ nfl-dynasty-analytics/
 
 **Trade Sentiment** — analyses actual transaction behaviour from your league (and league mates' other leagues) to find information edges.
 
+**Redraft Trade Analyser** — values an in-season trade by the change it makes to your playoff probability, not by summing points. Player values blend Sleeper's live weekly projections with a usage model (carries, targets, air yards, red-zone looks → expected points, with shrunk efficiency so touchdown luck washes out). The rest of the regular season is simulated thousands of times with and without the trade on the same random draws, so the difference is a paired comparison. Works for Sleeper and public ESPN leagues; data is fetched live on each request (short cache, bypass with `?refresh=true`). Open the **TRADE** tab in the React app, or call the API directly:
+
+```bash
+# standings, player values and baseline playoff odds
+curl "localhost:8000/api/trade/league/espn/1985088560?me_first=Korede&me_last=Sanusi"
+# evaluate a trade (player ids are Sleeper ids, as returned above)
+curl -X POST localhost:8000/api/trade/evaluate -H "Content-Type: application/json" \
+  -d '{"platform":"espn","league_id":"1985088560","me":3,"partner":6,"give":["<id>"],"get":["<id>"]}'
+```
+
+Private ESPN leagues return 403 until the league manager enables *Make league viewable to public*.
+
 **Positional Scarcity** — concentration metrics showing which positions have the steepest talent drop-offs.
 
 ## Data Sources
@@ -107,6 +121,8 @@ nfl-dynasty-analytics/
 | Sleeper API | Free, no auth | League data, rosters, trades, drafts |
 | nfl_data_py | Free, open source | Historical stats back to 1999 |
 | Sleeper Trending | Free, no auth | Platform-wide add/drop trends |
+| Sleeper projections & stats | Free, no auth | Weekly projections, box scores with usage detail |
+| ESPN Fantasy API | Free, public leagues only | League settings, rosters, schedule, scores |
 
 ## Roadmap
 
@@ -117,5 +133,6 @@ nfl-dynasty-analytics/
 - [x] Sleeper API client with history traversal
 - [x] Live draft board with pick tracking
 - [ ] Trade sentiment model
+- [x] Redraft trade analyser (Sleeper + ESPN, playoff-odds Monte Carlo)
 - [x] Drop-off prediction pipeline
 - [x] Sleeper app data integration
